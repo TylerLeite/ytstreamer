@@ -4,17 +4,24 @@
 
 <p>Requires</p>
 <ul>
-  <li>ogg123</li>
+  <li>pyglet</li>
   <li>libav-tools</li>
   <li>youtube-dl</li>
+  <li>pycurl</li>
+  <li>websocket</li>
 </ul>
 
 <p>How to install these things</p>
 <ol>
-  <li>sudo apt-get install vorbis-tools</li>
-  <li>sudo apt-get install libav-tools</li>
-  <li>pip install youtube-dl</li>
+  <li>sudo pip install pyglet</li>
+  <li>sudo apt-get install libavbin-dev libavbin0 -y</li>
+  <li>sudo apt-get install libav-tools -y</li>
+  <li>sudo pip install youtube-dl</li>
+  <li>sudo pip install pycurl</li>
+  <li>sudo pip install websocket-client</li>
 </ol>
+
+<p>Note: pycurl depends on libssl and libpython</p>
 
 ## Running the server
 
@@ -37,6 +44,7 @@ resume
 volume
   -u, --up
   -d, --down
+
 fuckjon
 
 add [id]

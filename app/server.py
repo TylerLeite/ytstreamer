@@ -1,14 +1,21 @@
+# Known bugs:
+"""
+1. no youtube results = crash
+2. smiley face breaks
+3. if you skip while its downloading a song it breaks
+"""
+
 import os
 import sys
 import time
 import random
-import socket
 import datetime
 import threading
 
 import Queue
 
 from multiprocessing.pool import Pool
+from websocket import create_connection
 
 #sys.path.append('..')
 from ext.webcrawl import *
@@ -25,20 +32,20 @@ class Server:
 
         self.cmd_queue = Queue.Queue()
 
-        self.sock = None
-        self.connections = dict()
 
-        self.address = settings["address"]
-        self.port = int(settings["port"])
+        server = settings["serv_url"]
+        port = settings["serv_port"]
+        route = settings["serv_route"]
+        self.ws_host = "ws://%s:%s/%s" % (server, port, route)
 
         self.alive = threading.Event()
         self.threads = dict()
         self.playback_proc = None
 
-        self.max_queue = os.path.realpath(settings["max_queue"])
-        self. max_cache = os.path.realpath(settings["max_cache"])
+        self.max_queue = settings["max_queue"]
+        self.max_cache = settings["max_cache"]
 
-        self.verbose = os.path.realpath(settings["verbose"])
+        self.verbose = int(settings["verbose"])
 
         self.autopl_file = os.path.realpath(settings["autopl_file"])
         self.dl_folder  = os.path.realpath(settings["dl_folder"])
@@ -82,15 +89,27 @@ class Server:
 
         # Create socket
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server_address = (self.address, self.port)
-            self.sock.bind(server_address)
-            self.sock.listen(1)
-            self.log("Listening on port %i" % (self.port), 10)
+            #socket.setdefaulttimeout(1)
+            self.init_sock()
         except Exception as e:
             self.log_error(e)
             self.alive.clear()
+
+    def init_sock(self):
+        for i in range(10):
+            try:
+                self.ws = create_connection(self.ws_host)
+                break
+            except Exception as e:
+                self.log("Failed to connect #%i" % i)
+                print e
+                time.sleep(1)
+
+        self.log("Listening on %s" % (self.ws_host), 10)
+
+    def kill_sock(self):
+        self.ws.close()
+        self.ws = None
 
     def go(self):
         self.alive.set()
@@ -111,7 +130,7 @@ class Server:
             self.threads["#commands"].start()
 
             # Wait on all threads
-            self.cleanup()
+            #self.cleanup()
 
         except Exception as e:
             self.log_error(e)
@@ -121,50 +140,106 @@ class Server:
 
     def handle_connections(self):
         while self.alive.isSet():
-            conn, addr = self.sock.accept()
             try:
-                self.log("Awaiting data from %s:%i" % (addr[0], addr[1]), 10)
-                data = conn.recv(1024)
+                self.log("Awaiting data from %s" % self.ws_host)
+                data = self.ws.recv()
                 self.log("Recieved %i bytes of data" % len(data), 10)
-                out = read_get(data)
-                cmd_queue.put(out)
+                out = self.read_get(data)
+
+                #self.ws.send("ACK") #acknowledge (we'll do it later)
+                if not None in out:
+                    self.cmd_queue.put(out)
             except Exception as e:
-                return None
+                continue
 
     def handle_commands(self):
         while self.alive.isSet():
             if self.cmd_queue.empty():
                 time.sleep(1)
             else:
-                print self.cmd_queue.get()
-                pass
+                uid, cmd, args = self.cmd_queue.get()
+                #big bad command controller
+                if cmd == "status":
+                    self.do_command_status(uid, args[0])
+                elif cmd == "play":
+                    self.do_command_play(uid, args[0], args[1])
+                elif cmd in ["skip", "next"]:
+                    self.do_command_skip(uid)
+                elif cmd == "clear":
+                    self.do_command_clear(uid)
+                elif cmd == "add":
+                    pass
+                elif cmd == "setgroup":
+                    pass
+                elif cmd == "reboot":
+                    pass
+                elif cmd == "pause":
+                    pass
+                elif cmd == "resume":
+                    pass
+                elif cmd == "volume":
+                    pass
+                elif cmd == "fuckjon":
+                    pass
+
+    def do_command_status(self, uid, of):
+        of = of.lstrip("-").lower()
+
+        status = "Improper argument: " + of
+
+        if of in ["queue", "q"]:
+            status = "Here is the queue:\n"
+            for i, elem in enumerate(list(self.playqueue.queue)):
+                info = ytsearch(elem[1])[1]
+                status += "%i: %s\n" % (i, info[:len('aaaaaaaaaaaaaaaaaaaaaaa')])
+        elif of in ["current", "c"]:
+            info = ytsearch(self.current_song)
+            status = info[1]
+        elif of in ["autoplaylist", "a"]:
+            pass
+
+        self.log("Sending status: %s" % status, 10)
+        self.ws.send(status)
+
+    def do_command_play(self, uid, placement, query):
+        placement = placement.lstrip("-").lower()
+        if placement in ["append", "a"]:
+            self.log("Adding song to end of queue: %s" % (query))
+            self.playqueue.put((uid, query))
+        elif placement in ["next", "n"]:
+            pass
+        elif placement in ["force", "f", "now"]:
+            pass
+        else:
+            print "no bueno"
+
+    def do_command_skip(self, uid):
+        self.playback_proc.kill()
+        self.log("Skipped a song", 10)
+
+    def do_command_clear(self, uid):
+        self.playqueue = Queue.Queue()
 
     def handle_playback(self):
         self.current_song  = random.choice(self.autoplaylist)
-        self.playback_proc = ogg123(ytdl(ytsearch(self.current_song)[0]))
 
         while self.alive.isSet():
-            if p.poll():
-                print p.poll()
-                time.sleep(1)
-                continue
-            elif not self.playqueue.empty():
-                self.current_song = self.playqueue.get()
+            if not self.playqueue.empty():
+                self.current_song = self.playqueue.get()[1]
             else:
                 self.current_song  = random.choice(self.autoplaylist)
 
-
+            self.log("Playing song: " + self.current_song)
             self.playback_proc = ogg123(ytdl(ytsearch(self.current_song)[0]))
+            self.playback_proc.wait()
 
-
-
-    def read_get(data):
-        self.log("Parsing command: " + command, 10)
+    def read_get(self, data):
+        self.log("Parsing command: " + data, 10)
         try:
             command = data.split("GET /")[1].split(" HTTP")[0].split("/")
-            uid = command[0]
+            uid = command[0][1:]
             cmd = command[1]
-            args = command[2:-1]
+            args = command[2:]
             self.log("Command parsed successfully (probably)", 10)
             return (uid, cmd, args)
         except Exception as e:
@@ -186,12 +261,11 @@ class Server:
             connections[conn].close()
         self.log("Active connections terminated", 10)
 
-        self.playback_proc.kill()
+        #self.playback_proc.kill()
         self.log("Subprocesses killed", 10)
 
     ### LOGGING ###
     def report(self, msg):
-        # This function is too complicated to properly comment
         sys.stdout.flush()
         print msg
 
@@ -203,8 +277,8 @@ class Server:
         return msg
 
     def log(self, msg, log_level=0):
+        # This function is too complicated to properly comment
         if log_level <= self.verbose:
-            print msg
             return self.report(msg)
         else:
             return msg # This is pythonic
